@@ -1,0 +1,3 @@
+# openrig-librarian
+
+A search index and desk that answer what an OpenRig rig's project already knows: docs, commits, issues, missions and agent sessions, with cited, freshness-aware results.
