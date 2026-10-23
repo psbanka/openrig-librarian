@@ -31,6 +31,16 @@ create index if not exists chunks_by_ref on chunks (ref);
 create virtual table if not exists fts using fts5 (
   title, text, content = 'chunks', content_rowid = 'id', tokenize = 'porter unicode61'
 );
+create table if not exists sessions (
+  ref text primary key references items (ref),
+  harness text not null,
+  id text not null,
+  cwd text not null,
+  parent text,
+  seat text,
+  model text,
+  commits text not null
+);
 `;
 
 /** `${XDG_DATA_HOME:-~/.local/share}/openrig-librarian/<rig>`, created owner-only. */
@@ -42,9 +52,8 @@ export function dataDir(rig: string): string {
   return dir;
 }
 
-export function openStore(rig: string): Store {
-  const dir = dataDir(rig);
-  const path = join(dir, "index.db");
+/** Opens an index file in WAL mode. Close it with closeStore, or close(true). */
+export function openIndex(path: string): Database {
   const db = new Database(path, { create: true });
   // Before WAL starts: SQLite gives its -wal and -shm files the database file's mode.
   chmodSync(path, 0o600);
@@ -54,5 +63,15 @@ export function openStore(rig: string): Store {
   db.run("pragma foreign_keys = on");
   db.run("pragma temp_store = memory");
   db.run(SCHEMA);
-  return { db, dir, rig };
+  return db;
+}
+
+export function openStore(rig: string): Store {
+  const dir = dataDir(rig);
+  return { db: openIndex(join(dir, "index.db")), dir, rig };
+}
+
+/** Closes now, finalizing open statements, so the WAL is folded back and its files removed. */
+export function closeStore(store: Store): void {
+  store.db.close(true);
 }

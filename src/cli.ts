@@ -1,13 +1,16 @@
 #!/usr/bin/env bun
 // The librarian command: update the rig's index from its book, and search it.
+import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { expandHome, parseBookRef, readBook } from "./book";
 import { fetchOrigin } from "./git";
 import { ingest } from "./ingest";
 import { formatResult, search } from "./search";
+import { claudeSessions } from "./sources/claude";
+import { codexSessions } from "./sources/codex";
 import { folderDocs } from "./sources/folder";
 import { gitCommits, gitDocs } from "./sources/git";
-import { openStore } from "./store";
+import { closeStore, openStore } from "./store";
 
 const USAGE = "usage: librarian <update | search <query>> --book <repo>:<path> [--json]";
 
@@ -34,6 +37,15 @@ async function main(argv: string[]): Promise<number> {
       }
       for (const folder of book.settings.folders ?? [])
         report[`doc:${folder.name}`] = (await ingest(store, folderDocs(folder))).added;
+      // After the repos are fetched, so session commits are checked against a current origin/main.
+      const context = {
+        home: homedir(),
+        dataDir: store.dir,
+        sessions: book.settings.sessions,
+        repos: book.settings.repos,
+      };
+      report["session:claude"] = (await ingest(store, claudeSessions(context))).added;
+      report["session:codex"] = (await ingest(store, codexSessions(context))).added;
       console.log(
         values.json
           ? JSON.stringify(report)
@@ -47,8 +59,7 @@ async function main(argv: string[]): Promise<number> {
     }
     return 0;
   } finally {
-    // true: finalize open statements and close now, so the WAL is folded back and removed.
-    store.db.close(true);
+    closeStore(store);
   }
 }
 

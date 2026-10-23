@@ -1,18 +1,11 @@
-import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { BOOK_REF, DATA, librarian, searchJson } from "./setup";
+import { BOOK_REF, DATA, librarian, readIndex, searchJson } from "./setup";
 
 const chunkCounts = () => {
-  const path = join(DATA, "index.db");
-  expect(existsSync(path)).toBe(true);
-  const db = new Database(path);
-  try {
-    return db.query("select ref, count(*) as n from chunks group by ref order by ref").all();
-  } finally {
-    db.close();
-  }
+  expect(existsSync(join(DATA, "index.db"))).toBe(true);
+  return readIndex((db) => db.query("select ref, count(*) as n from chunks group by ref order by ref").all());
 };
 
 describe("Feature: Search the record", () => {

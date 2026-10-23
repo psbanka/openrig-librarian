@@ -11,6 +11,21 @@ export type SourceKind =
 
 export type Authority = 1 | 2 | 3 | 4 | 5;
 
+/** Who ran a session, where, on what model, and what it committed. */
+export interface SessionInfo {
+  harness: "claude" | "codex";
+  /** The session id, or the agent file name for a subagent. */
+  id: string;
+  /** The working directory most of its records name. */
+  cwd: string;
+  /** A subagent's parent session id. */
+  parent?: string;
+  seat?: string;
+  model?: string;
+  /** Session links: "commit:<repo>/<sha9>". */
+  commits: string[];
+}
+
 /** One item a source yields, before redaction and chunking. */
 export interface SourceItem {
   kind: SourceKind;
@@ -26,6 +41,7 @@ export interface SourceItem {
   state?: string;
   /** Overrides the kind's authority, e.g. a folder of notes the book ranks lower. */
   authority?: Authority;
+  session?: SessionInfo;
 }
 
 /** One search result. */
@@ -39,6 +55,8 @@ export interface Card {
   authority: Authority;
   state?: string;
   stale?: { reason: string; by?: string };
+  /** The seat a session ran in. */
+  seat?: string;
   /** Session links: the commits a session made. */
   commits?: string[];
 }

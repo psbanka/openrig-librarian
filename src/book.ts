@@ -16,8 +16,8 @@ export interface Settings {
   folders?: Array<{ name: string; path: string; globs: string[]; authority?: Authority }>;
   forge?: { url: string; repos: string[] };
   missions?: { repo: string; path: string; exclude?: string[] };
-  /** Regex sources matched against a session's working directory. */
-  sessions: { cwd: string[]; exclude: string[] };
+  /** Regex sources matched against a session's working directory, and where seats live. */
+  sessions: { cwd: string[]; exclude: string[]; seats?: { root: string; renames?: Record<string, string> } };
   judge: { url: string; model: string };
   embed: { url: string; model: string };
   connect: { codexSandbox: string; codexProfile: string };

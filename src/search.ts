@@ -28,6 +28,8 @@ interface Row {
   date: string;
   state: string | null;
   authority: Authority;
+  seat: string | null;
+  commits: string | null;
 }
 
 export function exact(store: Store, query: string, k: number): Card[] {
@@ -42,8 +44,8 @@ export function exact(store: Store, query: string, k: number): Card[] {
          from fts join chunks c on c.id = fts.rowid where fts match ?1),
        ranked as (
          select ref, id, score, row_number() over (partition by ref order by score, id) as n from hits)
-       select r.ref, r.id, i.kind, i.title, i.date, i.state, i.authority
-       from ranked r join items i on i.ref = r.ref
+       select r.ref, r.id, i.kind, i.title, i.date, i.state, i.authority, s.seat, s.commits
+       from ranked r join items i on i.ref = r.ref left join sessions s on s.ref = r.ref
        where r.n = 1 order by r.score, r.id limit ?2`,
     )
     .all(match, k) as Row[];
@@ -56,6 +58,8 @@ export function exact(store: Store, query: string, k: number): Card[] {
     snippet: (snippet.get(match, row.id) as { text: string }).text,
     authority: row.authority,
     ...(row.state ? { state: row.state } : {}),
+    ...(row.seat ? { seat: row.seat } : {}),
+    ...(row.commits && row.commits !== "[]" ? { commits: JSON.parse(row.commits) as string[] } : {}),
   }));
 }
 
@@ -71,7 +75,9 @@ export function formatResult(result: SearchResult): string {
       ...cards.map(
         (card) =>
           `  ${card.ref}  ${card.kind}  ${card.date.slice(0, 10)}  authority ${card.authority}` +
-          `${card.state ? `  ${card.state}` : ""}\n    ${card.title}\n    ${card.snippet.replace(/\s+/g, " ")}`,
+          `${card.state ? `  ${card.state}` : ""}${card.seat ? `  seat ${card.seat}` : ""}` +
+          `\n    ${card.title}\n    ${card.snippet.replace(/\s+/g, " ")}` +
+          `${card.commits?.length ? `\n    commits: ${card.commits.join(", ")}` : ""}`,
       ),
     ].join("\n");
   return [

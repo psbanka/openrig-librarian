@@ -43,6 +43,10 @@ export async function ingest(
   const drop = db.prepare("delete from chunks where ref = ?");
   const insert = db.prepare("insert into chunks (ref, seq, title, text) values (?, ?, ?, ?) returning id");
   const index = db.prepare("insert into fts (rowid, title, text) values (?, ?, ?)");
+  const remember = db.prepare(`
+    insert into sessions (ref, harness, id, cwd, parent, seat, model, commits) values (?, ?, ?, ?, ?, ?, ?, ?)
+    on conflict (ref) do update set harness = excluded.harness, id = excluded.id, cwd = excluded.cwd,
+      parent = excluded.parent, seat = excluded.seat, model = excluded.model, commits = excluded.commits`);
   const write = db.transaction((item: SourceItem) => {
     const title = redact(item.title);
     upsert.run(
@@ -51,9 +55,24 @@ export async function ingest(
       title,
       item.date,
       item.version,
-      item.state ?? null,
+      item.state ? redact(item.state) : null,
       item.authority ?? AUTHORITY[item.kind],
     );
+    if (item.session) {
+      // The id and parent are inside the ref, which the caller has already checked.
+      // Seat and model are for display, so they are stored redacted.
+      const s = item.session;
+      remember.run(
+        item.ref,
+        s.harness,
+        s.id,
+        s.cwd,
+        s.parent ?? null,
+        s.seat ? redact(s.seat) : null,
+        s.model ? redact(s.model) : null,
+        JSON.stringify(s.commits),
+      );
+    }
     unindex.run(item.ref);
     drop.run(item.ref);
     chunks(redact(item.text)).forEach((text, seq) => {
@@ -64,9 +83,16 @@ export async function ingest(
   let added = 0;
   let skipped = 0;
   for await (const item of items) {
-    if (redact(item.ref) !== item.ref) {
+    // A ref and a working directory are operational: they can't be redacted and still work.
+    const unsafe =
+      redact(item.ref) !== item.ref
+        ? "reference"
+        : item.session && redact(item.session.cwd) !== item.session.cwd
+          ? "working directory"
+          : null;
+    if (unsafe) {
       skipped++;
-      console.error(`librarian: skipped a ${item.kind} whose reference contains a credential`);
+      console.error(`librarian: skipped a ${item.kind} whose ${unsafe} contains a credential`);
       continue;
     }
     write(item);

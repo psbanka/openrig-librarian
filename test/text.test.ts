@@ -55,4 +55,25 @@ describe("formatResult", () => {
     expect(text).toContain("meaning (0)");
     expect(text).toContain("phrasebook (0)");
   });
+
+  test("shows a session card's seat and commits", () => {
+    const text = formatResult({
+      exact: [
+        {
+          kind: "session",
+          ref: "claude:unit-session",
+          date: "2026-10-03T10:00:00.000Z",
+          title: "Unit session",
+          snippet: "A prompt",
+          authority: 5,
+          seat: "new-desk",
+          commits: ["commit:corpus/abc123456"],
+        },
+      ],
+      meaning: [],
+      phrasebook: [],
+    });
+    expect(text).toContain("claude:unit-session  session  2026-10-03  authority 5  seat new-desk");
+    expect(text).toContain("commits: commit:corpus/abc123456");
+  });
 });
