@@ -16,7 +16,8 @@ export interface Settings {
   repos: Array<{ name: string; path: string; docs: string[]; authority?: Authority; forge?: string }>;
   folders?: Array<{ name: string; path: string; globs: string[]; authority?: Authority }>;
   forge?: { url: string; repos: string[] };
-  missions?: { repo: string; path: string; exclude?: string[] };
+  /** `exclude` names whole missions; `skip` globs files inside each mission folder. */
+  missions?: { repo: string; path: string; exclude?: string[]; skip?: string[] };
   /** Regex sources matched against a session's working directory, and where seats live. */
   sessions: { cwd: string[]; exclude: string[]; seats?: { root: string; renames?: Record<string, string> } };
   judge: { url: string; model: string };

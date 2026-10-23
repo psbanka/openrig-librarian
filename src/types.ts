@@ -61,12 +61,16 @@ export interface Card {
   seat?: string;
   /** Session links: the commits a session made. */
   commits?: string[];
+  /** On a phrasebook card: the phrasing that matched. */
+  phrase?: string;
 }
 
 export interface SearchResult {
   exact: Card[];
   meaning: Card[];
   phrasebook: Card[];
+  /** What search couldn't do, such as "meaning list unavailable: …". */
+  warnings?: string[];
 }
 
 /** The spec's authority order: docs and specs, decisions, issues, commits, sessions. */

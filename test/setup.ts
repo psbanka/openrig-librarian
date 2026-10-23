@@ -2,7 +2,7 @@
 // each with a bare origin, plus a fake HOME, and indexes them once.
 import { expect } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { openIndex } from "../src/store";
+import { closeStore, openIndex, openStore, type Store } from "../src/store";
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { SearchResult } from "../src/types";
@@ -104,12 +104,29 @@ export function searchJson(query: string): SearchResult {
 }
 
 /** Reads the fixture index, closing it the way the command does so no -wal or -shm is left. */
-export function readIndex<T>(read: (db: Database) => T): T {
-  const db = openIndex(join(DATA, "index.db"));
+export function readIndex<T>(read: (db: Database) => T, dir = DATA): T {
+  const db = openIndex(join(dir, "index.db"));
   try {
     return read(db);
   } finally {
     db.close(true);
+  }
+}
+
+/** Runs `use` against a fresh store under .test-work/xdg-unit, away from the fixture's index. */
+export async function withUnitStore<T>(rig: string, use: (store: Store) => T | Promise<T>): Promise<T> {
+  const xdg = join(WORK, "xdg-unit");
+  const saved = process.env.XDG_DATA_HOME;
+  rmSync(xdg, { recursive: true, force: true });
+  mkdirSync(xdg, { recursive: true });
+  process.env.XDG_DATA_HOME = xdg;
+  const store = openStore(rig);
+  try {
+    return await use(store);
+  } finally {
+    closeStore(store);
+    if (saved === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = saved;
   }
 }
 
@@ -139,11 +156,12 @@ missions:
   repo: ${PLANS}
   path: missions
   exclude: [gamma]
+  skip: ["source/**"]
 judge:
   url: http://127.0.0.1:9/api/v1/systemone
   model: typesafe/jev-1.13
 embed:
-  url: http://127.0.0.1:11434
+  url: ${OLLAMA_URL}
   model: nomic-embed-text
 connect:
   codexSandbox: workspace-write
@@ -165,6 +183,26 @@ const { value: portLine } = await fakeForge.stdout.getReader().read();
 export const FORGE_URL = `http://127.0.0.1:${new TextDecoder().decode(portLine).trim()}`;
 process.on("exit", () => fakeForge.kill());
 
+// A stand-in embedder, in its own process for the same reason as the forge.
+const fakeOllama = Bun.spawn([process.execPath, join(ROOT, "test", "fake-ollama.ts")], {
+  stdin: "pipe",
+  stdout: "pipe",
+  stderr: "inherit",
+});
+const { value: ollamaPort } = await fakeOllama.stdout.getReader().read();
+export const OLLAMA_URL = `http://127.0.0.1:${new TextDecoder().decode(ollamaPort).trim()}`;
+process.on("exit", () => fakeOllama.kill());
+
+// A second stand-in embedder that fails after its first batch: an update interrupted mid-embedding.
+const brokenOllama = Bun.spawn([process.execPath, join(ROOT, "test", "fake-ollama.ts"), "--fail-after", "1"], {
+  stdin: "pipe",
+  stdout: "pipe",
+  stderr: "inherit",
+});
+const { value: brokenPort } = await brokenOllama.stdout.getReader().read();
+export const BROKEN_OLLAMA_URL = `http://127.0.0.1:${new TextDecoder().decode(brokenPort).trim()}`;
+process.on("exit", () => brokenOllama.kill());
+
 repo(CORPUS);
 write(join(CORPUS, "README.md"), "# Corpus\n\nThe zephyrine-doc guide lives here. celilo-apt-repo publishes packages.\n");
 export const FIRST_SHA = commit(CORPUS, "Start the corpus", "2026-09-01T12:00:00Z");
@@ -176,6 +214,10 @@ write(join(CORPUS, "docs", `${SECRETS[2].text}.md`), "A zephyrine-secretname not
 write(join(CORPUS, "docs", "flood.md"), Array.from({ length: 250 }, () => "floodterm ".repeat(160)).join("\n\n"));
 write(join(CORPUS, "docs", "other.md"), `A single floodterm among many other words. ${"filler ".repeat(40)}\n`);
 write(join(CORPUS, "docs", "unicode.md"), "Le café est prêt. 日本語 テキスト.\n");
+// Shares no words with "agile animal jumping above a tired dog", only meaning.
+write(join(CORPUS, "docs", "fox.md"), "The quick brown fox leaps over the sleepy hound.\n");
+// The answer to "my test can't fail", in none of its words.
+write(join(CORPUS, "docs", "reach.md"), "Every check must prove it reaches the thing it checks.\n");
 commit(CORPUS, `Add zephyrine-commit notes\n\nA key in a commit message: ${SECRETS[0].text}\n`, "2026-10-01T12:00:00Z");
 
 // A merged pull request: a branch, a sync merge of main into it, then the pull request's merge.
@@ -280,20 +322,53 @@ const missionSpec = (id: string, name: string, status: string, body: string) =>
   `---\nid: ${id}\nmission: ${name}\nstatus: ${status}\n---\n\n# ${name}\n\n${body}\n`;
 write(join(PLANS, "missions", "alpha", "SPEC.md"), missionSpec("OPR.1", "alpha", "complete", "An alphamissionterm spec."));
 write(join(PLANS, "missions", "alpha", "NOTES.md"), "An alphanotesterm note.\n");
+write(join(PLANS, "missions", "alpha", "source", "openspec", "proposal.md"), "A sourcedupterm proposal, copied from a repo.\n");
 write(join(PLANS, "missions", "beta", "SPEC.md"), missionSpec("OPR.2", "beta", "draft", "A betamissionterm spec."));
 write(join(PLANS, "missions", "gamma", "SPEC.md"), missionSpec("OPR.3", "gamma", "draft", "A gammaexcludedterm spec."));
 commit(PLANS, "Add the missions", "2026-10-02T09:00:00Z");
 
 repo(BOOK);
 write(join(BOOK, "librarian", "librarian.yaml"), settings(3));
+const phrase = (text: string, source: string) =>
+  `- phrase: ${JSON.stringify(text)}\n  sources: [${JSON.stringify(source)}]\n  by: operator\n  date: "2026-10-02"\n`;
+write(join(BOOK, "librarian", "phrasebook.yaml"), phrase("my test can't fail", "doc:corpus/docs/reach.md"));
 commit(BOOK, "Add the book", "2026-10-01T12:00:00Z");
+
+// A second rig on the same corpus, whose embedder fails after one batch (vectors.test.ts).
+export const RESTART_BOOK = join(WORK, "book-restart");
+export const RESTART_REF = `${RESTART_BOOK}:librarian`;
+export const RESTART_DATA = join(HOME, ".local", "share", "openrig-librarian", "restart-rig");
+repo(RESTART_BOOK);
+write(
+  join(RESTART_BOOK, "librarian", "librarian.yaml"),
+  `rig: restart-rig
+repos:
+  - name: corpus
+    path: ${CORPUS}
+    docs: ["**/*.md"]
+sessions:
+  cwd: []
+  exclude: []
+judge:
+  url: http://127.0.0.1:9/api/v1/systemone
+  model: typesafe/jev-1.13
+embed:
+  url: ${BROKEN_OLLAMA_URL}
+  model: nomic-embed-text
+connect:
+  codexSandbox: workspace-write
+  codexProfile: luna
+`,
+);
+commit(RESTART_BOOK, "Add the restart book", "2026-10-01T12:00:00Z");
 
 // Work that never reached origin/main. The Librarian must see none of it.
 write(join(CORPUS, "docs", "unpushed.md"), "An unpushedterm doc.\n");
 export const UNPUSHED_SHA = commitLocal(CORPUS, "Add unpushedterm notes", "2026-10-02T12:00:00Z");
 appendFileSync(join(CORPUS, "README.md"), "A workingcopyonly edit.\n");
 write(join(BOOK, "librarian", "librarian.yaml"), settings(2));
-commitLocal(BOOK, "Rank notes higher, unpushed", "2026-10-02T12:00:00Z");
+appendFileSync(join(BOOK, "librarian", "phrasebook.yaml"), phrase("an unpushedphrase question", "doc:corpus/README.md"));
+commitLocal(BOOK, "Rank notes higher and add a phrase, unpushed", "2026-10-02T12:00:00Z");
 
 // Session fixtures. Field names follow the real Claude Code and Codex formats; see
 // "Context for the executor" in tasks-slice-2.md.

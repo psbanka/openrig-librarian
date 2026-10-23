@@ -18,7 +18,8 @@ export function frontmatter(text: string): Record<string, unknown> {
   }
 }
 
-export function* missionItems(missions: Missions): Generator<SourceItem> {
+/** `skipped` collects the refs of files left out, so the caller can remove any an earlier update indexed. */
+export function* missionItems(missions: Missions, skipped: string[] = []): Generator<SourceItem> {
   const cwd = expandHome(missions.repo);
   const root = missions.path.replace(/\/+$/, "");
   const byMission = new Map<string, Array<{ path: string; sha: string }>>();
@@ -27,7 +28,13 @@ export function* missionItems(missions: Missions): Generator<SourceItem> {
     if (!match) continue;
     const [, sha, path] = match;
     const name = path.slice(root.length + 1).split("/")[0];
-    if (!name || missions.exclude?.includes(name)) continue;
+    if (!name) continue;
+    const inside = path.slice(root.length + name.length + 2);
+    // Left out: whole missions in `exclude`, and files matching `skip`, such as copies of repo docs.
+    if (missions.exclude?.includes(name) || missions.skip?.some((glob) => new Bun.Glob(glob).match(inside))) {
+      skipped.push(`mission:${name}/${inside}`);
+      continue;
+    }
     byMission.set(name, [...(byMission.get(name) ?? []), { path, sha }]);
   }
   const dates = lastChanged(cwd);

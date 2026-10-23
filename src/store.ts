@@ -45,6 +45,17 @@ create table if not exists merges (
   ref text primary key references items (ref),
   merged_as text not null
 );
+create table if not exists vecs (
+  id integer primary key references chunks (id) on delete cascade,
+  model text not null,
+  v blob not null
+);
+create table if not exists phrase_vecs (
+  phrase text not null,
+  model text not null,
+  v blob not null,
+  primary key (phrase, model)
+);
 `;
 
 /** `${XDG_DATA_HOME:-~/.local/share}/openrig-librarian/<rig>`, created owner-only. */

@@ -50,8 +50,13 @@ export async function ingest(
   const merge = db.prepare(
     "insert into merges (ref, merged_as) values (?, ?) on conflict (ref) do update set merged_as = excluded.merged_as",
   );
+  const current = db.prepare("select version, title from items where ref = ?");
   const write = db.transaction((item: SourceItem) => {
     const title = redact(item.title);
+    // A source's chunks come from its text (named by its version) and its title. When neither
+    // changed, keep the chunks, and the vectors on them; only the metadata below is rewritten.
+    const before = current.get(item.ref) as { version: string; title: string } | null;
+    const rechunk = !before || before.version !== item.version || before.title !== title;
     upsert.run(
       item.ref,
       item.kind,
@@ -77,6 +82,7 @@ export async function ingest(
       );
     }
     if (item.mergedAs) merge.run(item.ref, item.mergedAs);
+    if (!rechunk) return;
     unindex.run(item.ref);
     drop.run(item.ref);
     chunks(redact(item.text)).forEach((text, seq) => {

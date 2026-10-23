@@ -1,10 +1,14 @@
 #!/usr/bin/env bun
-// The librarian command: update the rig's index from its book, and search it.
+// The librarian command: update the rig's index from its book, search it, and keep the desk's
+// phrasebook.
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { expandHome, parseBookRef, readBook } from "./book";
+import { embedMissing } from "./embed";
 import { fetchOrigin } from "./git";
 import { ingest, removeItems } from "./ingest";
+import { addPhrase } from "./phrasebook";
 import { formatResult, search } from "./search";
 import { claudeSessions } from "./sources/claude";
 import { codexSessions } from "./sources/codex";
@@ -14,16 +18,28 @@ import { gitCommits, gitDocs } from "./sources/git";
 import { missionItems } from "./sources/missions";
 import { closeStore, openStore } from "./store";
 
-const USAGE = "usage: librarian <update | search <query>> --book <repo>:<path> [--json]";
+const USAGE =
+  "usage: librarian <update | search <query> | phrasebook add --phrase <text> --source <ref>... [--by <name>]>" +
+  " --book <repo>:<path> [--json]";
 
 async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { book: { type: "string" }, json: { type: "boolean", default: false } },
+    options: {
+      book: { type: "string" },
+      json: { type: "boolean", default: false },
+      phrase: { type: "string" },
+      source: { type: "string", multiple: true },
+      by: { type: "string", default: "operator" },
+    },
     allowPositionals: true,
   });
   const [command, ...words] = positionals;
-  if (!values.book || (command !== "update" && command !== "search") || (command === "search" && !words.length)) {
+  const valid =
+    command === "update" ||
+    (command === "search" && words.length > 0) ||
+    (command === "phrasebook" && words[0] === "add" && !!values.phrase && !!values.source?.length);
+  if (!values.book || !valid) {
     console.error(USAGE);
     return 2;
   }
@@ -64,7 +80,10 @@ async function main(argv: string[]): Promise<number> {
         report[`doc:${folder.name}`] = (await ingest(store, folderDocs(folder))).added;
       if (settings.missions) {
         fetchOrigin(expandHome(settings.missions.repo));
-        report.mission = (await ingest(store, missionItems(settings.missions))).added;
+        const skipped: string[] = [];
+        report.mission = (await ingest(store, missionItems(settings.missions, skipped))).added;
+        // A file now excluded or skipped may be in the index from an earlier update.
+        removeItems(store, skipped);
       }
       // Reading transcripts is most of an update's time; skip it when no session directory is wanted.
       if (settings.sessions.cwd.length) {
@@ -73,6 +92,14 @@ async function main(argv: string[]): Promise<number> {
         report["session:claude"] = (await ingest(store, claudeSessions(context))).added;
         report["session:codex"] = (await ingest(store, codexSessions(context))).added;
       }
+      // Last, so every source's chunks are in. Only chunks without a vector are embedded.
+      try {
+        report.embed = await embedMissing(store, settings.embed);
+      } catch (error) {
+        console.error(
+          `librarian: embedding stopped: ${error instanceof Error ? error.message : String(error)}; the next update resumes`,
+        );
+      }
       console.log(
         values.json
           ? JSON.stringify(report)
@@ -80,9 +107,18 @@ async function main(argv: string[]): Promise<number> {
               .map(([source, count]) => `${source}: ${count}`)
               .join("\n"),
       );
-    } else {
+    } else if (command === "search") {
       const result = await search(store, book, words.join(" "));
+      for (const warning of result.warnings ?? []) console.error(`librarian: ${warning}`);
       console.log(values.json ? JSON.stringify(result) : formatResult(result));
+    } else {
+      const entry = addPhrase(store, {
+        phrase: values.phrase ?? "",
+        sources: values.source ?? [],
+        by: values.by ?? "operator",
+        date: new Date().toISOString().slice(0, 10),
+      });
+      console.log(values.json ? JSON.stringify(entry) : `added to ${join(store.dir, "phrasebook.yaml")}: ${entry.phrase}`);
     }
     return 0;
   } finally {
