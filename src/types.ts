@@ -42,6 +42,8 @@ export interface SourceItem {
   /** Overrides the kind's authority, e.g. a folder of notes the book ranks lower. */
   authority?: Authority;
   session?: SessionInfo;
+  /** A merged pull request's merge commit, as a commit ref. */
+  mergedAs?: string;
 }
 
 /** One search result. */

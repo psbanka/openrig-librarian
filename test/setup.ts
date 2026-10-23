@@ -15,6 +15,8 @@ export const CORPUS = join(WORK, "corpus");
 export const BOOK = join(WORK, "book");
 export const BOOK_REF = `${BOOK}:librarian`;
 export const DATA = join(HOME, ".local", "share", "openrig-librarian", "test-rig");
+export const FORGE_DIR = join(WORK, "forge");
+export const PLANS = join(WORK, "plans");
 
 /** Fake credentials, assembled from pieces so no whole token is ever committed. */
 export const SECRETS = [
@@ -116,6 +118,7 @@ repos:
   - name: corpus
     path: ${CORPUS}
     docs: ["**/*.md"]
+    forge: fixture/corpus
 folders:
   - name: notes
     path: ~/notes
@@ -129,6 +132,13 @@ sessions:
     renames:
       old-desk: new-desk
       token-desk: ${SEAT_TOKEN}
+forge:
+  url: ${FORGE_URL}
+  repos: [fixture/corpus]
+missions:
+  repo: ${PLANS}
+  path: missions
+  exclude: [gamma]
 judge:
   url: http://127.0.0.1:9/api/v1/systemone
   model: typesafe/jev-1.13
@@ -144,6 +154,17 @@ rmSync(WORK, { recursive: true, force: true });
 mkdirSync(TMP, { recursive: true });
 mkdirSync(HOME, { recursive: true });
 
+// A stand-in Forgejo, in its own process: the tests run the command synchronously,
+// so a server in this process would never answer it. It exits when this process ends.
+const fakeForge = Bun.spawn([process.execPath, join(ROOT, "test", "fake-forge.ts"), FORGE_DIR], {
+  stdin: "pipe",
+  stdout: "pipe",
+  stderr: "inherit",
+});
+const { value: portLine } = await fakeForge.stdout.getReader().read();
+export const FORGE_URL = `http://127.0.0.1:${new TextDecoder().decode(portLine).trim()}`;
+process.on("exit", () => fakeForge.kill());
+
 repo(CORPUS);
 write(join(CORPUS, "README.md"), "# Corpus\n\nThe zephyrine-doc guide lives here. celilo-apt-repo publishes packages.\n");
 export const FIRST_SHA = commit(CORPUS, "Start the corpus", "2026-09-01T12:00:00Z");
@@ -156,7 +177,112 @@ write(join(CORPUS, "docs", "flood.md"), Array.from({ length: 250 }, () => "flood
 write(join(CORPUS, "docs", "other.md"), `A single floodterm among many other words. ${"filler ".repeat(40)}\n`);
 write(join(CORPUS, "docs", "unicode.md"), "Le café est prêt. 日本語 テキスト.\n");
 commit(CORPUS, `Add zephyrine-commit notes\n\nA key in a commit message: ${SECRETS[0].text}\n`, "2026-10-01T12:00:00Z");
+
+// A merged pull request: a branch, a sync merge of main into it, then the pull request's merge.
+sh(CORPUS, ["git", "checkout", "-q", "-b", "widget"]);
+write(join(CORPUS, "docs", "widget.md"), "A widgetbranchterm doc.\n");
+export const WIDGET_SHA = commitLocal(CORPUS, "Add the widget doc", "2026-10-01T13:00:00Z");
+sh(CORPUS, ["git", "checkout", "-q", "main"]);
+write(join(CORPUS, "docs", "mainline.md"), "A mainline doc.\n");
+export const MAINLINE_SHA = commitLocal(CORPUS, "Mainline change", "2026-10-01T14:00:00Z");
+const MERGE_DATE = { GIT_AUTHOR_DATE: "2026-10-01T15:00:00Z", GIT_COMMITTER_DATE: "2026-10-01T15:00:00Z" };
+sh(CORPUS, ["git", "checkout", "-q", "widget"]);
+sh(CORPUS, ["git", "merge", "-q", "--no-ff", "-m", "Merge branch 'main' into widget", "main"], MERGE_DATE);
+export const SYNC_SHA = sh(CORPUS, ["git", "rev-parse", "HEAD"]);
+sh(CORPUS, ["git", "checkout", "-q", "main"]);
+sh(CORPUS, ["git", "merge", "-q", "--no-ff", "-m", "Merge pull request 'Add widget' (#7) from widget into main", "widget"], MERGE_DATE);
+export const MERGE_SHA = sh(CORPUS, ["git", "rev-parse", "HEAD"]);
+// A feature merged locally, and a sync merge that carries notes of its own: both stay indexed.
+sh(CORPUS, ["git", "checkout", "-q", "-b", "feature"]);
+write(join(CORPUS, "docs", "feature.md"), "A featurebranchterm doc.\n");
+export const FEATURE_SHA = commitLocal(CORPUS, "Add the feature doc", "2026-10-01T16:00:00Z");
+sh(CORPUS, ["git", "checkout", "-q", "main"]);
+write(join(CORPUS, "docs", "mainline2.md"), "A second mainline doc.\n");
+commitLocal(CORPUS, "Second mainline change", "2026-10-01T17:00:00Z");
+const LATER = { GIT_AUTHOR_DATE: "2026-10-01T18:00:00Z", GIT_COMMITTER_DATE: "2026-10-01T18:00:00Z" };
+sh(CORPUS, ["git", "checkout", "-q", "feature"]);
+sh(CORPUS, ["git", "merge", "-q", "--no-ff", "-m", "Merge branch 'main' into feature\n\nKept the syncdetailterm line from main.", "main"], LATER);
+export const DETAILED_SYNC_SHA = sh(CORPUS, ["git", "rev-parse", "HEAD"]);
+sh(CORPUS, ["git", "checkout", "-q", "main"]);
+sh(CORPUS, ["git", "merge", "-q", "--no-ff", "-m", "Merge branch 'feature'\n\nResolve the featureconflictterm by keeping both docs.", "feature"], LATER);
+export const FEATURE_MERGE_SHA = sh(CORPUS, ["git", "rev-parse", "HEAD"]);
+// A squash-merged pull request (#10): one ordinary commit, which keeps its own card.
+write(join(CORPUS, "docs", "squash.md"), "A squashedterm doc.\n");
+export const SQUASH_SHA = commitLocal(CORPUS, "Add the squashed doc (#10)", "2026-10-01T19:00:00Z");
+sh(CORPUS, ["git", "push", "-q", "origin", "main"]);
+
+// The stand-in forge's data, shaped like Forgejo's API (see tasks-slice-3.md).
+const forgeJson = (name: string, items: object[]) =>
+  write(join(FORGE_DIR, "fixture", "corpus", `${name}.json`), JSON.stringify(items));
+forgeJson("issues", [
+  {
+    number: 1,
+    title: "Widget crashes",
+    body: `An issueopenterm report. forgemarker ${SECRETS[1].text} after.`,
+    state: "open",
+    updated_at: "2026-10-05T10:00:00Z",
+    pull_request: null,
+  },
+  { number: 2, title: "Old bug", body: "An issueclosedterm report.", state: "closed", updated_at: "2026-10-06T10:00:00Z", pull_request: null },
+]);
+forgeJson("pulls", [
+  {
+    number: 7,
+    title: "Add widget",
+    body: "A pullmergedterm description.",
+    state: "closed",
+    merged: true,
+    merge_commit_sha: MERGE_SHA,
+    updated_at: "2026-10-01T15:00:00Z",
+  },
+  {
+    number: 8,
+    title: "Abandoned idea",
+    body: "A pullclosedterm description.",
+    state: "closed",
+    merged: false,
+    merge_commit_sha: null,
+    updated_at: "2026-10-07T10:00:00Z",
+  },
+  {
+    number: 10,
+    title: "Squash the doc",
+    body: "A pullsquashterm description.",
+    state: "closed",
+    merged: true,
+    merge_commit_sha: SQUASH_SHA,
+    updated_at: "2026-10-01T19:00:00Z",
+  },
+]);
+const issueUrl = (n: number) => `https://forge.example/fixture/corpus/issues/${n}`;
+forgeJson("issues-comments", [
+  { id: 1001, body: "A commentissueterm reply.", issue_url: issueUrl(1), pull_request_url: "", updated_at: "2026-10-05T11:00:00Z" },
+  {
+    id: 1002,
+    body: "A commentpullterm review note.",
+    issue_url: "",
+    pull_request_url: "https://forge.example/fixture/corpus/pulls/7",
+    updated_at: "2026-10-01T16:00:00Z",
+  },
+  ...Array.from({ length: 52 }, (_, i) => ({
+    id: 2000 + i,
+    body: `Filler comment ${i}.`,
+    issue_url: issueUrl(2),
+    pull_request_url: "",
+    updated_at: "2026-10-06T11:00:00Z",
+  })),
+  { id: 3000, body: "A commentlastpageterm reply.", issue_url: issueUrl(2), pull_request_url: "", updated_at: "2026-10-06T12:00:00Z" },
+]);
 write(join(HOME, "notes", "memory.md"), "A zephyrine-note to remember.\n");
+
+repo(PLANS);
+const missionSpec = (id: string, name: string, status: string, body: string) =>
+  `---\nid: ${id}\nmission: ${name}\nstatus: ${status}\n---\n\n# ${name}\n\n${body}\n`;
+write(join(PLANS, "missions", "alpha", "SPEC.md"), missionSpec("OPR.1", "alpha", "complete", "An alphamissionterm spec."));
+write(join(PLANS, "missions", "alpha", "NOTES.md"), "An alphanotesterm note.\n");
+write(join(PLANS, "missions", "beta", "SPEC.md"), missionSpec("OPR.2", "beta", "draft", "A betamissionterm spec."));
+write(join(PLANS, "missions", "gamma", "SPEC.md"), missionSpec("OPR.3", "gamma", "draft", "A gammaexcludedterm spec."));
+commit(PLANS, "Add the missions", "2026-10-02T09:00:00Z");
 
 repo(BOOK);
 write(join(BOOK, "librarian", "librarian.yaml"), settings(3));

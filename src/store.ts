@@ -41,6 +41,10 @@ create table if not exists sessions (
   model text,
   commits text not null
 );
+create table if not exists merges (
+  ref text primary key references items (ref),
+  merged_as text not null
+);
 `;
 
 /** `${XDG_DATA_HOME:-~/.local/share}/openrig-librarian/<rig>`, created owner-only. */

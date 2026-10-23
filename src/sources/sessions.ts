@@ -60,31 +60,46 @@ export function textOf(content: any): string {
 // Every function below that shortens text redacts the whole text first: shortening can
 // separate a secret from the prefix that identifies it (password=, sk-ant-, BEGIN … KEY).
 
+const MARKER = /\[REDACTED[^\]]*\]/g;
+
+/** `end`, moved past any redaction marker it would split. */
+function safeEnd(text: string, end: number): number {
+  for (const marker of text.matchAll(MARKER))
+    if (marker.index < end && marker.index + marker[0].length > end) return marker.index + marker[0].length;
+  return end;
+}
+
+/** `start`, moved back to the beginning of any redaction marker it would split. */
+function safeStart(text: string, start: number): number {
+  for (const marker of text.matchAll(MARKER))
+    if (marker.index < start && marker.index + marker[0].length > start) return marker.index;
+  return start;
+}
+
 export function firstLine(text: string): string {
   const line = redact(text).trim().split("\n")[0] ?? "";
-  // Cut at 120 characters, but never through a redaction marker.
-  let end = 120;
-  for (const marker of line.matchAll(/\[REDACTED[^\]]*\]/g))
-    if (marker.index < end && marker.index + marker[0].length > end) end = marker.index + marker[0].length;
-  return line.slice(0, end);
+  return line.slice(0, safeEnd(line, 120));
 }
 
 /** Whole under 600 characters; otherwise the first 150, the last 150 and up to 300 of error lines. */
 export function trimToolOutput(text: string): string {
   const clean = redact(text);
   if (clean.length < 600) return clean;
-  const errors = clean
-    .slice(150, -150)
+  const headEnd = safeEnd(clean, 150);
+  const tailStart = Math.max(headEnd, safeStart(clean, clean.length - 150));
+  const errorLines = clean
+    .slice(headEnd, tailStart)
     .split("\n")
     .filter((line) => ERROR_WORDS.test(line))
-    .join("\n")
-    .slice(0, 300);
-  return [clean.slice(0, 150), errors, clean.slice(-150)].filter(Boolean).join("\n…\n");
+    .join("\n");
+  const errors = errorLines.slice(0, safeEnd(errorLines, 300));
+  return [clean.slice(0, headEnd), errors, clean.slice(tailStart)].filter(Boolean).join("\n…\n");
 }
 
-/** A tool call's input, redacted whole and then cut to TOOL_CALL_LIMIT. */
+/** A tool call's input, redacted whole and then cut to TOOL_CALL_LIMIT, never inside a marker. */
 export function cutInput(text: string): string {
-  return redact(text).slice(0, TOOL_CALL_LIMIT);
+  const clean = redact(text);
+  return clean.slice(0, safeEnd(clean, TOOL_CALL_LIMIT));
 }
 
 export function isLibrarianCall(name: string, input: string): boolean {

@@ -47,6 +47,9 @@ export async function ingest(
     insert into sessions (ref, harness, id, cwd, parent, seat, model, commits) values (?, ?, ?, ?, ?, ?, ?, ?)
     on conflict (ref) do update set harness = excluded.harness, id = excluded.id, cwd = excluded.cwd,
       parent = excluded.parent, seat = excluded.seat, model = excluded.model, commits = excluded.commits`);
+  const merge = db.prepare(
+    "insert into merges (ref, merged_as) values (?, ?) on conflict (ref) do update set merged_as = excluded.merged_as",
+  );
   const write = db.transaction((item: SourceItem) => {
     const title = redact(item.title);
     upsert.run(
@@ -73,6 +76,7 @@ export async function ingest(
         JSON.stringify(s.commits),
       );
     }
+    if (item.mergedAs) merge.run(item.ref, item.mergedAs);
     unindex.run(item.ref);
     drop.run(item.ref);
     chunks(redact(item.text)).forEach((text, seq) => {
@@ -99,4 +103,30 @@ export async function ingest(
     added++;
   }
   return { added, skipped };
+}
+
+/** Removes items and everything stored for them, in one transaction. Returns how many existed. */
+export function removeItems(store: Store, refs: string[]): number {
+  const { db } = store;
+  const exists = db.prepare("select 1 from items where ref = ?");
+  const unindex = db.prepare(
+    "insert into fts (fts, rowid, title, text) select 'delete', id, title, text from chunks where ref = ?",
+  );
+  // Rows that reference an item go before the item itself.
+  const deletes = [
+    "delete from chunks where ref = ?",
+    "delete from sessions where ref = ?",
+    "delete from merges where ref = ?",
+    "delete from items where ref = ?",
+  ].map((sql) => db.prepare(sql));
+  let removed = 0;
+  db.transaction(() => {
+    for (const ref of refs) {
+      if (!exists.get(ref)) continue;
+      unindex.run(ref);
+      for (const statement of deletes) statement.run(ref);
+      removed++;
+    }
+  })();
+  return removed;
 }

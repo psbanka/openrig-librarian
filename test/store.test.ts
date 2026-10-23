@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ingest } from "../src/ingest";
+import { ingest, removeItems } from "../src/ingest";
 import { leakCounts } from "../src/leaks";
 import { exact } from "../src/search";
 import { closeStore, dataDir, openIndex, openStore } from "../src/store";
@@ -41,7 +41,7 @@ describe("the data directory", () => {
     process.env.XDG_DATA_HOME = XDG;
     try {
       const store = openStore("close-rig");
-      store.db.query("select count(*) as n from items").get();
+      store.db.prepare("select count(*) as n from items").get();
       closeStore(store);
       expect(readdirSync(store.dir).filter((name) => name.startsWith("index.db"))).toEqual(["index.db"]);
     } finally {
@@ -164,6 +164,77 @@ describe("the data directory", () => {
       expect(Object.keys(counts)).toEqual(
         expect.arrayContaining(["chunks.text", "sessions.cwd", "sessions.seat", "sessions.model"]),
       );
+    } finally {
+      if (saved === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = saved;
+    }
+  });
+
+  test("a pull request's merge commit comes back on its card", async () => {
+    const saved = process.env.XDG_DATA_HOME;
+    rmSync(XDG, { recursive: true, force: true });
+    mkdirSync(XDG, { recursive: true });
+    process.env.XDG_DATA_HOME = XDG;
+    try {
+      const store = openStore("merge-rig");
+      await ingest(store, [
+        {
+          kind: "pull-request",
+          ref: "pull:fixture/corpus#7",
+          title: "#7 Add widget",
+          date: "2026-10-01T15:00:00Z",
+          text: "A pullunitterm description.",
+          version: "1",
+          state: "merged",
+          mergedAs: "commit:corpus/abc123456",
+        },
+      ]);
+      const cards = exact(store, "pullunitterm", 5);
+      const fields = Object.keys(leakCounts(store.db));
+      closeStore(store);
+      expect(cards[0]).toMatchObject({
+        kind: "pull-request",
+        state: "merged",
+        authority: 3,
+        commits: ["commit:corpus/abc123456"],
+      });
+      expect(fields).toContain("merges.merged_as");
+    } finally {
+      if (saved === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = saved;
+    }
+  });
+
+  test("removeItems deletes an item with its chunks, full-text entries and links, and ignores unknown refs", async () => {
+    const saved = process.env.XDG_DATA_HOME;
+    rmSync(XDG, { recursive: true, force: true });
+    mkdirSync(XDG, { recursive: true });
+    process.env.XDG_DATA_HOME = XDG;
+    try {
+      const store = openStore("remove-rig");
+      await ingest(store, [
+        {
+          kind: "pull-request",
+          ref: "pull:fixture/corpus#9",
+          title: "#9 Remove me",
+          date: "2026-10-01T15:00:00Z",
+          text: "A removeunitterm description.",
+          version: "1",
+          state: "merged",
+          mergedAs: "commit:corpus/abc123456",
+        },
+      ]);
+      const removed = removeItems(store, ["pull:fixture/corpus#9", "commit:corpus/notthere0"]);
+      const count = (sql: string) => (store.db.query(sql).get() as { n: number }).n;
+      const left = {
+        items: count("select count(*) as n from items"),
+        chunks: count("select count(*) as n from chunks"),
+        merges: count("select count(*) as n from merges"),
+        fullText: count("select count(*) as n from fts where fts match 'removeunitterm'"),
+      };
+      closeStore(store);
+      expect(removed).toBe(1);
+      expect(left).toEqual({ items: 0, chunks: 0, merges: 0, fullText: 0 });
     } finally {
       if (saved === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = saved;

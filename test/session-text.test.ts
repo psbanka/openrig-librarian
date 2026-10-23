@@ -161,3 +161,25 @@ describe("which sessions", () => {
     ]);
   });
 });
+
+describe("cuts never split a redaction marker", () => {
+  const key = ["sk-ant-", "api03-", "Mk2".repeat(10)].join("");
+
+  test("trimToolOutput extends its head past a marker it would split", () => {
+    const out = trimToolOutput(`${"x".repeat(140)} ${key} ${"y".repeat(800)}`);
+    expect(out).toContain("[REDACTED:anthropic]");
+    expect(out).not.toMatch(/\[REDACTED[^\]]*\n/);
+  });
+
+  test("trimToolOutput starts its tail before a marker it would split", () => {
+    const out = trimToolOutput(`${"x".repeat(800)} ${key} ${"y".repeat(140)}`);
+    expect(out).toContain("[REDACTED:anthropic]");
+    expect(out.match(/REDACTED/g)?.length).toBe(1);
+  });
+
+  test("cutInput extends its cut past a marker it would split", () => {
+    const out = cutInput(JSON.stringify({ content: `${"e".repeat(1477)} ${key}` }));
+    expect(out).toContain("[REDACTED:anthropic]");
+    expect(out.endsWith("]")).toBe(true);
+  });
+});

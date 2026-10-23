@@ -30,6 +30,7 @@ interface Row {
   authority: Authority;
   seat: string | null;
   commits: string | null;
+  merged_as: string | null;
 }
 
 export function exact(store: Store, query: string, k: number): Card[] {
@@ -44,8 +45,9 @@ export function exact(store: Store, query: string, k: number): Card[] {
          from fts join chunks c on c.id = fts.rowid where fts match ?1),
        ranked as (
          select ref, id, score, row_number() over (partition by ref order by score, id) as n from hits)
-       select r.ref, r.id, i.kind, i.title, i.date, i.state, i.authority, s.seat, s.commits
+       select r.ref, r.id, i.kind, i.title, i.date, i.state, i.authority, s.seat, s.commits, m.merged_as
        from ranked r join items i on i.ref = r.ref left join sessions s on s.ref = r.ref
+         left join merges m on m.ref = r.ref
        where r.n = 1 order by r.score, r.id limit ?2`,
     )
     .all(match, k) as Row[];
@@ -60,6 +62,7 @@ export function exact(store: Store, query: string, k: number): Card[] {
     ...(row.state ? { state: row.state } : {}),
     ...(row.seat ? { seat: row.seat } : {}),
     ...(row.commits && row.commits !== "[]" ? { commits: JSON.parse(row.commits) as string[] } : {}),
+    ...(row.merged_as ? { commits: [row.merged_as] } : {}),
   }));
 }
 

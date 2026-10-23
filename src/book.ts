@@ -12,7 +12,8 @@ export interface BookRef {
 
 export interface Settings {
   rig: string;
-  repos: Array<{ name: string; path: string; docs: string[]; authority?: Authority }>;
+  /** `forge` links a repo to its forge repo ("owner/name"), so pull request merges can fold. */
+  repos: Array<{ name: string; path: string; docs: string[]; authority?: Authority; forge?: string }>;
   folders?: Array<{ name: string; path: string; globs: string[]; authority?: Authority }>;
   forge?: { url: string; repos: string[] };
   missions?: { repo: string; path: string; exclude?: string[] };

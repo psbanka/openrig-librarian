@@ -7,6 +7,7 @@ const FIELDS: Array<[table: string, columns: string[]]> = [
   ["items", ["ref", "title", "state"]],
   ["chunks", ["title", "text"]],
   ["sessions", ["id", "cwd", "parent", "seat", "model", "commits"]],
+  ["merges", ["merged_as"]],
 ];
 
 export function leakCounts(db: Database): Record<string, number> {
